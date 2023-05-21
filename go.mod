@@ -17,6 +17,8 @@ require (
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/joho/godotenv v1.4.0 // indirect
 	github.com/kr/text v0.2.0 // indirect
+	github.com/rabbitmq/amqp091-go v1.8.1
+	github.com/rabbitmq/amqp091-go v1.8.1
 	golang.org/x/net v0.8.0 // indirect
 	golang.org/x/sys v0.6.0 // indirect
 	golang.org/x/text v0.8.0 // indirect

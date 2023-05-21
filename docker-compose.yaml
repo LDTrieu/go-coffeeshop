@@ -1,4 +1,4 @@
-version: "3"
+version: "3.7"
 
 services:
   postgres:
@@ -7,59 +7,23 @@ services:
       - POSTGRES_DB=postgres
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=P@ssw0rd
-    healthcheck:
-      test: ["CMD", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
     ports:
       - "5432:5432"
     networks:
       - coffeeshop-network
-  
-  proxy:
-    build:
-      context: .
-      dockerfile: ./docker/Dockerfile-proxy
-    image: go-coffeeshop-proxy
+
+  rabbitmq:
+    image: rabbitmq:3.11-management-alpine
     environment:
-      APP_NAME: 'proxy-service in docker'
-      GRPC_PRODUCT_HOST: 'product'
-      GRPC_PRODUCT_PORT: 5001
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
     ports:
-      - 5000:5000
-    depends_on:
-      - postgres
+      - "5672:5672"
+      - "15672:15672"
     networks:
       - coffeeshop-network
-
-  product:
-    build:
-      context: .
-      dockerfile: ./docker/Dockerfile-product 
-    container_name: product
-    image: go-coffeeshop-product
-    environment:
-      APP_NAME: 'product-service in docker'
-    ports:
-      - 8080:8080
-    depends_on:
-      - postgres
-    
-
-  # rabbitmq:
-  #   image: rabbitmq:3.11-management-alpine
-  #   environment:
-  #     RABBITMQ_DEFAULT_USER: guest
-  #     RABBITMQ_DEFAULT_PASS: guest
-  #   healthcheck:
-  #     test: rabbitmq-diagnostics -q ping
-  #     interval: 30s
-  #     timeout: 30s
-  #     retries: 3
-  #   ports:
-  #     - "5672:5672"
-  #     - "15672:15672"
-  #   networks:
-  #     - coffeeshop-network
-  
+networks:
+  coffeeshop-network:
   # proxy:
   #   build:
   #     context: .
@@ -69,8 +33,6 @@ services:
   #     APP_NAME: 'proxy-service in docker'
   #     GRPC_PRODUCT_HOST: 'product'
   #     GRPC_PRODUCT_PORT: 5001
-  #     GRPC_COUNTER_HOST: 'counter'
-  #     GRPC_COUNTER_PORT: 5002
   #   ports:
   #     - 5000:5000
   #   depends_on:
@@ -79,5 +41,32 @@ services:
   #   networks:
   #     - coffeeshop-network
 
-networks:
-  coffeeshop-network:
+  # product:
+  #   build:
+  #     context: .
+  #     dockerfile: ./docker/Dockerfile-product
+  #   image: go-coffeeshop-product
+  #   environment:
+  #     APP_NAME: 'product-service in docker'
+  #   ports:
+  #     - 5001:5001
+  #   networks:
+  #     - coffeeshop-network
+
+  # counter:
+  #   build:
+  #     context: .
+  #     dockerfile: ./docker/Dockerfile-counter
+  #   image: go-coffeeshop-counter
+  #   environment:
+  #     APP_NAME: 'counter-service in docker'
+  #   ports:
+  #     - 5002:5002
+  #   depends_on:
+  #     - postgres
+  #     - rabbitmq
+  #   networks:
+  #     - coffeeshop-network
+
+# networks:
+#   coffeeshop-network:
