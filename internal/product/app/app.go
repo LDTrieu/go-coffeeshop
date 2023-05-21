@@ -6,7 +6,7 @@ import (
 
 	"go-coffeeshop/cmd/product/config"
 	mylogger "go-coffeeshop/pkg/logger"
-	gen "go-coffeeshop/proto"
+	gen "go-coffeeshop/proto/gen"
 
 	"google.golang.org/grpc"
 )
@@ -26,7 +26,7 @@ type ProductServiceServerImpl struct {
 func (g *ProductServiceServerImpl) GetItemTypes(ctx context.Context, request *gen.GetItemTypesRequest) (*gen.GetItemTypesResponse, error) {
 	g.logger.Info("GET: GetItemTypes")
 
-	itemTypes := []gen.ItemType{
+	itemTypes := []gen.ItemTypeDto{
 		{
 			Name: "CAPPUCCINO",
 			Type: 0,
@@ -72,7 +72,7 @@ func (g *ProductServiceServerImpl) GetItemTypes(ctx context.Context, request *ge
 	res := gen.GetItemTypesResponse{}
 
 	for _, v := range itemTypes {
-		res.ItemTypes = append(res.ItemTypes, &gen.ItemType{
+		res.ItemTypes = append(res.ItemTypes, &gen.ItemTypeDto{
 			Name: v.Name,
 			Type: v.Type,
 		})

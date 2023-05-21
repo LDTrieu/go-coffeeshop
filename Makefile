@@ -14,6 +14,16 @@ run-product:
 	CGO_ENABLED=0 go run -tags migrate go-coffeeshop/cmd/product
 .PHONY: run-product
 
+run-counter:
+	cd cmd/counter && go mod tidy && go mod download && \
+	CGO_ENABLED=0 go run -tags migrate go-coffeeshop/cmd/counter
+.PHONY: run-counter
+
+run-barista:
+	cd cmd/counter && go mod tidy && go mod download && \
+	CGO_ENABLED=0 go run -tags migrate go-coffeeshop/cmd/barista
+.PHONY: run-barista
+
 run-proxy:
 	cd cmd/proxy && go mod tidy && go mod download && \
 	CGO_ENABLED=0 go run -tags migrate go-coffeeshop/cmd/proxy
@@ -45,4 +55,4 @@ linter-golangci: ### check by golangci linter
 
 clean:
 	go clean
-	cd cmd/product && rm ${PRODUCT_BINARY_NAME}
+	rm ${PRODUCT_BINARY_NAME}
