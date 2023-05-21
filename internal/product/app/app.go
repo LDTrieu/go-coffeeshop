@@ -2,63 +2,31 @@ package app
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-
-	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
-	"time"
-
-	"go-coffeeshop/internal/product/entity"
-	log "go-coffeeshop/pkg/logger"
+	"net"
 
 	"go-coffeeshop/cmd/product/config"
+	mylogger "go-coffeeshop/pkg/logger"
+	gen "go-coffeeshop/proto"
 
-	"github.com/gorilla/mux"
+	"google.golang.org/grpc"
 )
 
-var (
-	router *mux.Router
-	logger *log.Logger
-)
-
-func Run(cfg *config.Config) {
-	var wait time.Duration
-
-	logger = log.New(cfg.Log.Level)
-	logger.Info("Init %s %s\n", cfg.Name, cfg.Version)
-
-	// Repository
-	// ...
-
-	// Use case
-	// ...
-
-	// HTTP Server
-	srv, err := initHTTPServer(cfg)
-	if err != nil {
-		logger.Fatal("%s", "cannot start server.")
-	}
-
-	logger.Info("%s %s.", "server start at", fmt.Sprintf("http://%s:%s", cfg.Host, cfg.Port))
-
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
-	<-quit
-
-	ctx, cancel := context.WithTimeout(context.Background(), wait)
-	defer cancel()
-	srv.Shutdown(ctx)
-	os.Exit(0)
-
+type App struct {
+	logger  *mylogger.Logger
+	cfg     *config.Config
+	network string
+	address string
 }
 
-func getItemTypes(w http.ResponseWriter, r *http.Request) {
-	logger.Info("%s", "GET: getItemTypes")
+type ProductServiceServerImpl struct {
+	gen.UnimplementedProductServiceServer
+	logger *mylogger.Logger
+}
 
-	itemTypeDtos := []entity.ItemTypeDto{
+func (g *ProductServiceServerImpl) GetItemTypes(ctx context.Context, request *gen.GetItemTypesRequest) (*gen.GetItemTypesResponse, error) {
+	g.logger.Info("GET: GetItemTypes")
+
+	itemTypes := []gen.ItemType{
 		{
 			Name: "CAPPUCCINO",
 			Type: 0,
@@ -101,48 +69,57 @@ func getItemTypes(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	responseWithJSON(w, http.StatusOK, itemTypeDtos)
+	res := gen.GetItemTypesResponse{}
+
+	for _, v := range itemTypes {
+		res.ItemTypes = append(res.ItemTypes, &gen.ItemType{
+			Name: v.Name,
+			Type: v.Type,
+		})
+	}
+
+	return &res, nil
 }
 
-// func getItemByTypes(w http.ResponseWriter, r *http.Request) {
-// 	logger.Info("%s", "GET: getItemByTypes")
-
-// 	responseWithJson(w, http.StatusOK)
-// }
-
-func responseWithError(w http.ResponseWriter, code int, message string) {
-	responseWithJSON(w, code, map[string]string{"error": message})
+func New(log *mylogger.Logger, cfg *config.Config) *App {
+	return &App{
+		logger:  log,
+		cfg:     cfg,
+		network: "tcp",
+		address: "0.0.0.0:5001",
+	}
 }
 
-func responseWithJSON(w http.ResponseWriter, code int, payload interface{}) {
-	res, err := json.Marshal(payload)
+func (a *App) Run(ctx context.Context) error {
+	a.logger.Info("Init %s %s\n", a.cfg.Name, a.cfg.Version)
+
+	// Repository
+	// ...
+
+	// Use case
+	// ...
+
+	// gRPC Server
+	l, err := net.Listen(a.network, a.address)
 	if err != nil {
-		logger.Error("%s", "couldn't marshal object.")
+		return err
 	}
 
-	w.Header().Set("Content-Type", "application-json")
-	w.WriteHeader(code)
-	w.Write(res)
-}
-
-func initHTTPServer(cfg *config.Config) (*http.Server, error) {
-	router = mux.NewRouter()
-	router.HandleFunc("/v1/api/item-types", getItemTypes).Methods("GET")
-	// router.HandleFunc("/v1/api/item-by-types", getItemByTypes).Methods("GET")
-
-	srv := &http.Server{
-		Handler:      router,
-		Addr:         fmt.Sprintf("%s:%s", "0.0.0.0", cfg.Port),
-		WriteTimeout: time.Second * 15,
-		ReadTimeout:  time.Second * 15,
-		IdleTimeout:  time.Second * 60,
-	}
-
-	go func() {
-		if err := srv.ListenAndServe(); err != nil {
-			logger.Error("%s", err)
+	defer func() {
+		if err := l.Close(); err != nil {
+			a.logger.Error("Failed to close %s %s: %v", a.network, a.address, err)
 		}
 	}()
 
-	return srv, nil
+	s := grpc.NewServer()
+	gen.RegisterProductServiceServer(s, &ProductServiceServerImpl{logger: a.logger})
+
+	go func() {
+		defer s.GracefulStop()
+		<-ctx.Done()
+	}()
+
+	a.logger.Info("Start server at " + a.address + " ...")
+
+	return s.Serve(l)
 }

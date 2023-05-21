@@ -1,14 +1,23 @@
 PRODUCT_BINARY_NAME=product.out
+PROXY_BINARY_NAME=proxy.out
 
 all: build test
 
-build:
+build-product:
 	go build -tags migrate -o ./cmd/product/${PRODUCT_BINARY_NAME} go-coffeeshop/cmd/product
 
-run:
+build-proxy:
+	go build -tags migrate -o ./cmd/proxy/${PROXY_BINARY_NAME} go-coffeeshop/cmd/proxy
+
+run-product:
 	cd cmd/product && go mod tidy && go mod download && \
 	CGO_ENABLED=0 go run -tags migrate go-coffeeshop/cmd/product
-.PHONY: run
+.PHONY: run-product
+
+run-proxy:
+	cd cmd/proxy && go mod tidy && go mod download && \
+	CGO_ENABLED=0 go run -tags migrate go-coffeeshop/cmd/proxy
+.PHONY: run-proxy
 
 test:
 	go test -v main.go
@@ -30,3 +39,10 @@ docker-rm-volume: ### remove docker volume
 	docker volume rm go-clean-template_pg-data
 .PHONY: docker-rm-volume
 
+linter-golangci: ### check by golangci linter
+	golangci-lint run
+.PHONY: linter-golangci
+
+clean:
+	go clean
+	cd cmd/product && rm ${PRODUCT_BINARY_NAME}
