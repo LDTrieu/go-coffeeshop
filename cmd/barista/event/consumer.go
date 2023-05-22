@@ -14,8 +14,7 @@ type Consumer struct {
 	conn *amqp.Connection
 }
 
-func NewConsumer(conn *amqp.Connection) (Consumer,
-	error) {
+func NewConsumer(conn *amqp.Connection) (Consumer, error) {
 	consumer := Consumer{
 		conn: conn,
 	}
@@ -96,11 +95,12 @@ func (c *Consumer) Listen(topics []string) error {
 			var payload Payload
 
 			_ = json.Unmarshal(d.Body, &payload)
+			messageType := d.Type
 
 			go func() {
-				switch payload.Name {
-				case "drink_made":
-					fmt.Println("Got it")
+				switch messageType {
+				case "barista.ordered":
+					fmt.Println(payload)
 				default:
 					fmt.Println("default")
 				}

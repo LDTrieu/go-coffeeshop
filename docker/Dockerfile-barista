@@ -10,17 +10,15 @@ COPY --from=modules /go/pkg /go/pkg
 COPY . /app
 WORKDIR /app
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build -tags migrate -o /bin/app ./cmd/product
+    go build -tags migrate -o /bin/app ./cmd/barista
 
 # Step 3: Final
 FROM scratch
-
-EXPOSE 5001
 
 # COPY --from=builder /app/config /config
 # COPY --from=builder /app/migrations /migrations
 
 # GOPATH for scratch images is /
-COPY --from=builder /app/cmd/product/config.yml /
+COPY --from=builder /app/cmd/barista/config.yml /
 COPY --from=builder /bin/app /app
 CMD ["/app"]

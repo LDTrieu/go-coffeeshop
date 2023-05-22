@@ -2,10 +2,9 @@ package config
 
 import (
 	"fmt"
+	configs "go-coffeeshop/pkg/config"
 	"log"
 	"os"
-
-	configs "go-coffeeshop/pkg/config"
 
 	"github.com/ilyakaznacheev/cleanenv"
 )
