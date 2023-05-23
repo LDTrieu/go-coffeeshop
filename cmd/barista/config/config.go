@@ -2,9 +2,10 @@ package config
 
 import (
 	"fmt"
-	configs "go-coffeeshop/pkg/config"
 	"log"
 	"os"
+
+	configs "go-coffeeshop/pkg/config"
 
 	"github.com/ilyakaznacheev/cleanenv"
 )
@@ -14,7 +15,13 @@ type (
 		configs.App  `yaml:"app"`
 		configs.HTTP `yaml:"http"`
 		configs.Log  `yaml:"logger"`
-		RabbitMQ     `yaml:"rabbit_mq"`
+		PG           `yaml:"postgres"`
+		RabbitMQ     `yaml:"rabbitmq"`
+	}
+
+	PG struct {
+		PoolMax int    `env-required:"true" yaml:"pool_max" env:"PG_POOL_MAX"`
+		DsnURL  string `env-required:"true" yaml:"dsn_url" env:"PG_DSN_URL"`
 	}
 
 	RabbitMQ struct {
@@ -31,7 +38,7 @@ func NewConfig() (*Config, error) {
 	}
 
 	// debug
-	fmt.Println(dir)
+	fmt.Println("config path: " + dir)
 
 	err = cleanenv.ReadConfig(dir+"/config.yml", cfg)
 	if err != nil {

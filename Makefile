@@ -53,6 +53,10 @@ linter-golangci: ### check by golangci linter
 	golangci-lint run
 .PHONY: linter-golangci
 
+sqlc:
+	sqlc generate
+.PHONY: sqlc
+
 clean:
 	go clean
 	rm ${PRODUCT_BINARY_NAME}

@@ -4,7 +4,7 @@ package go.coffeeshop.proto.productapi;
 
 import "google/api/annotations.proto";
 import "protoc-gen-openapiv2/options/annotations.proto";
-// import "common.proto";
+import "common.proto";
 
 option go_package = "go-coffeeshop/proto/gen";
 
@@ -53,4 +53,5 @@ message ItemTypeDto {
   string name = 1;
   int32 type = 2;
   double price = 3;
+  string image = 4;
 }

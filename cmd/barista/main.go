@@ -1,76 +1,90 @@
 package main
 
 import (
+	"context"
 	"fmt"
-	"log"
-	"math"
 	"os"
-	"time"
+	"os/signal"
+	"syscall"
 
-	"go-coffeeshop/cmd/barista/event"
+	"go-coffeeshop/cmd/barista/config"
+	"go-coffeeshop/internal/barista/app"
+	"go-coffeeshop/pkg/logger"
+	"go-coffeeshop/pkg/postgres"
+	"go-coffeeshop/pkg/rabbitmq"
 
-	amqp "github.com/rabbitmq/amqp091-go"
-)
+	"github.com/sirupsen/logrus"
+	"go.uber.org/automaxprocs/maxprocs"
+	"golang.org/x/exp/slog"
 
-const (
-	RetryTimes = 5
-	PowOf      = 2
+	pkgConsumer "go-coffeeshop/pkg/rabbitmq/consumer"
+	pkgPublisher "go-coffeeshop/pkg/rabbitmq/publisher"
+
+	_ "github.com/lib/pq"
 )
 
 func main() {
-	rabbitConn, err := connect()
+	// set GOMAXPROCS
+	_, err := maxprocs.Set()
 	if err != nil {
-		log.Println(err)
-		os.Exit(1)
+		slog.Error("failed set max procs", err)
 	}
 
-	defer rabbitConn.Close()
+	ctx, cancel := context.WithCancel(context.Background())
 
-	log.Println("Listening for and consuming RabbitMQ messages...")
-
-	consumer, err := event.NewConsumer(rabbitConn)
+	cfg, err := config.NewConfig()
 	if err != nil {
-		panic(err)
+		slog.Error("failed get config", err)
 	}
 
-	err = consumer.Listen([]string{"log.INFO", "log.WARNING", "log.ERROR"})
-	if err != nil {
-		log.Println(err)
-	}
-}
+	slog.Info("⚡ init app", "name", cfg.Name, "version", cfg.Version)
 
-func connect() (*amqp.Connection, error) {
-	var (
-		counts     int64
-		backOff    = 1 * time.Second
-		connection *amqp.Connection
-		rabbitURL  = "amqp://guest:guest@172.28.177.17:5672/"
+	// set up logrus
+	logrus.SetFormatter(&logrus.JSONFormatter{})
+	logrus.SetOutput(os.Stdout)
+	logrus.SetLevel(logger.ConvertLogLevel(cfg.Log.Level))
+
+	// integrate Logrus with the slog logger
+	//slog.New(logger.NewLogrusHandler(logrus.StandardLogger()))
+
+	a, cleanup, err := app.InitApp(cfg, postgres.DBConnString(cfg.PG.DsnURL), rabbitmq.RabbitMQConnStr(cfg.RabbitMQ.URL))
+	if err != nil {
+		slog.Error("failed init app", err)
+		cancel()
+	}
+
+	a.CounterOrderPub.Configure(
+		pkgPublisher.ExchangeName("counter-order-exchange"),
+		pkgPublisher.BindingKey("counter-order-routing-key"),
+		pkgPublisher.MessageTypeName("barista-order-updated"),
 	)
 
-	for {
-		c, err := amqp.Dial(rabbitURL)
+	a.Consumer.Configure(
+		pkgConsumer.ExchangeName("barista-order-exchange"),
+		pkgConsumer.QueueName("barista-order-queue"),
+		pkgConsumer.BindingKey("barista-order-routing-key"),
+		pkgConsumer.ConsumerTag("barista-order-consumer"),
+	)
+
+	slog.Info("🌏 start server...", "address", fmt.Sprintf("%s:%d", cfg.HTTP.Host, cfg.HTTP.Port))
+
+	go func() {
+		err := a.Consumer.StartConsumer(a.Worker)
 		if err != nil {
-			fmt.Println("RabbitMQ not yet ready...")
-			counts++
-		} else {
-			connection = c
-			fmt.Println()
-
-			break
+			slog.Error("failed to start Consumer", err)
+			cancel()
 		}
+	}()
 
-		if counts > RetryTimes {
-			fmt.Println(err)
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 
-			return nil, err
-		}
-
-		fmt.Printf("Backing off for %d seconds...\n", int(math.Pow(float64(counts), PowOf)))
-		backOff = time.Duration(math.Pow(float64(counts), PowOf)) * time.Second
-		time.Sleep(backOff)
-
-		continue
+	select {
+	case v := <-quit:
+		cleanup()
+		slog.Info("signal.Notify", v)
+	case done := <-ctx.Done():
+		cleanup()
+		slog.Info("ctx.Done", done)
 	}
-
-	return connection, nil
 }

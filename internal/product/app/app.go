@@ -1,125 +1,25 @@
 package app
 
 import (
-	"context"
-	"net"
-
 	"go-coffeeshop/cmd/product/config"
-	mylogger "go-coffeeshop/pkg/logger"
-	gen "go-coffeeshop/proto/gen"
-
-	"google.golang.org/grpc"
+	productUC "go-coffeeshop/internal/product/usecases/products"
+	"go-coffeeshop/proto/gen"
 )
 
 type App struct {
-	logger  *mylogger.Logger
-	cfg     *config.Config
-	network string
-	address string
+	Cfg               *config.Config
+	UC                productUC.UseCase
+	ProductGRPCServer gen.ProductServiceServer
 }
 
-type ProductServiceServerImpl struct {
-	gen.UnimplementedProductServiceServer
-	logger *mylogger.Logger
-}
-
-func (g *ProductServiceServerImpl) GetItemTypes(ctx context.Context, request *gen.GetItemTypesRequest) (*gen.GetItemTypesResponse, error) {
-	g.logger.Info("GET: GetItemTypes")
-
-	itemTypes := []gen.ItemTypeDto{
-		{
-			Name: "CAPPUCCINO",
-			Type: 0,
-		},
-		{
-			Name: "COFFEE_BLACK",
-			Type: 1,
-		},
-		{
-			Name: "COFFEE_WITH_ROOM",
-			Type: 2,
-		},
-		{
-			Name: "ESPRESSO",
-			Type: 3,
-		},
-		{
-			Name: "ESPRESSO_DOUBLE",
-			Type: 4,
-		},
-		{
-			Name: "LATTE",
-			Type: 5,
-		},
-		{
-			Name: "CAKEPOP",
-			Type: 6,
-		},
-		{
-			Name: "CROISSANT",
-			Type: 7,
-		},
-		{
-			Name: "MUFFIN",
-			Type: 8,
-		},
-		{
-			Name: "CROISSANT_CHOCOLATE",
-			Type: 9,
-		},
-	}
-
-	res := gen.GetItemTypesResponse{}
-
-	for _, v := range itemTypes {
-		res.ItemTypes = append(res.ItemTypes, &gen.ItemTypeDto{
-			Name: v.Name,
-			Type: v.Type,
-		})
-	}
-
-	return &res, nil
-}
-
-func New(log *mylogger.Logger, cfg *config.Config) *App {
+func New(
+	cfg *config.Config,
+	uc productUC.UseCase,
+	productGRPCServer gen.ProductServiceServer,
+) *App {
 	return &App{
-		logger:  log,
-		cfg:     cfg,
-		network: "tcp",
-		address: "0.0.0.0:5001",
+		Cfg:               cfg,
+		UC:                uc,
+		ProductGRPCServer: productGRPCServer,
 	}
-}
-
-func (a *App) Run(ctx context.Context) error {
-	a.logger.Info("Init %s %s\n", a.cfg.Name, a.cfg.Version)
-
-	// Repository
-	// ...
-
-	// Use case
-	// ...
-
-	// gRPC Server
-	l, err := net.Listen(a.network, a.address)
-	if err != nil {
-		return err
-	}
-
-	defer func() {
-		if err := l.Close(); err != nil {
-			a.logger.Error("Failed to close %s %s: %v", a.network, a.address, err)
-		}
-	}()
-
-	s := grpc.NewServer()
-	gen.RegisterProductServiceServer(s, &ProductServiceServerImpl{logger: a.logger})
-
-	go func() {
-		defer s.GracefulStop()
-		<-ctx.Done()
-	}()
-
-	a.logger.Info("Start server at " + a.address + " ...")
-
-	return s.Serve(l)
 }

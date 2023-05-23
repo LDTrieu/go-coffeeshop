@@ -3,215 +3,129 @@ package app
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
-	"net"
-	"time"
 
 	"go-coffeeshop/cmd/counter/config"
-	"go-coffeeshop/internal/counter/event"
-	mylogger "go-coffeeshop/pkg/logger"
-	gen "go-coffeeshop/proto/gen"
+	"go-coffeeshop/internal/counter/domain"
+	"go-coffeeshop/internal/counter/events"
+	ordersUC "go-coffeeshop/internal/counter/usecases/orders"
+	shared "go-coffeeshop/internal/pkg/event"
+	"go-coffeeshop/pkg/postgres"
+	pkgConsumer "go-coffeeshop/pkg/rabbitmq/consumer"
+	pkgPublisher "go-coffeeshop/pkg/rabbitmq/publisher"
+	"go-coffeeshop/proto/gen"
 
-	"github.com/google/uuid"
 	amqp "github.com/rabbitmq/amqp091-go"
-	"google.golang.org/grpc"
+	"golang.org/x/exp/slog"
 )
-
-const (
-	OrderTopic     = "orders_topic"
-	RetryTimes     = 5
-	BackOffSeconds = 2
-)
-
-var ErrCannotConnectRabbitMQ = errors.New("cannot connect to rabbit")
 
 type App struct {
-	logger  *mylogger.Logger
-	cfg     *config.Config
-	network string
-	address string
+	Cfg       *config.Config
+	PG        postgres.DBEngine
+	AMQPConn  *amqp.Connection
+	Publisher pkgPublisher.EventPublisher
+	Consumer  pkgConsumer.EventConsumer
+
+	BaristaOrderPub ordersUC.BaristaEventPublisher
+	KitchenOrderPub ordersUC.KitchenEventPublisher
+
+	ProductDomainSvc  domain.ProductDomainService
+	UC                ordersUC.UseCase
+	CounterGRPCServer gen.CounterServiceServer
+
+	baristaHandler events.BaristaOrderUpdatedEventHandler
+	kitchenHandler events.KitchenOrderUpdatedEventHandler
 }
 
-type CounterServiceServerImpl struct {
-	gen.UnimplementedCounterServiceServer
-	logger     *mylogger.Logger
-	rabbitConn *amqp.Connection
-}
+func New(
+	cfg *config.Config,
+	pg postgres.DBEngine,
+	amqpConn *amqp.Connection,
+	publisher pkgPublisher.EventPublisher,
+	consumer pkgConsumer.EventConsumer,
 
-type Payload struct {
-	Name string `json:"name"`
-}
+	baristaOrderPub ordersUC.BaristaEventPublisher,
+	kitchenOrderPub ordersUC.KitchenEventPublisher,
+	productDomainSvc domain.ProductDomainService,
+	uc ordersUC.UseCase,
+	counterGRPCServer gen.CounterServiceServer,
 
-func (g *CounterServiceServerImpl) GetListOrderFulfillment(ctx context.Context, request *gen.GetListOrderFulfillmentRequest) (*gen.GetListOrderFulfillmentResponse, error) {
-	g.logger.Info("GET: GetListOrderFulfillment")
-
-	ch, err := g.rabbitConn.Channel()
-	if err != nil {
-		panic(err)
-	}
-	defer ch.Close()
-
-	event := Payload{
-		Name: "drink_made",
-	}
-
-	eventBytes, err := json.Marshal(event)
-	if err != nil {
-		g.logger.LogError(err)
-	}
-
-	err = ch.PublishWithContext(
-		ctx,
-		OrderTopic,
-		"log.INFO",
-		false,
-		false,
-		amqp.Publishing{
-			ContentType: "text/plain",
-			Body:        eventBytes,
-		},
-	)
-
-	if err != nil {
-		g.logger.LogError(err)
-
-		return nil, err
-	}
-
-	g.logger.Info("Sending message: %s -> %s", event, "orders_topic")
-
-	res := gen.GetListOrderFulfillmentResponse{}
-
-	return &res, nil
-}
-
-func (g *CounterServiceServerImpl) PlaceOrder(ctx context.Context, request *gen.PlaceOrderRequest) (*gen.PlaceOrderResponse, error) {
-	g.logger.Info("POST: PlaceOrder")
-
-	fmt.Println(request)
-
-	ch, err := g.rabbitConn.Channel()
-	if err != nil {
-		panic(err)
-	}
-	defer ch.Close()
-
-	eventBytes, err := json.Marshal(event.BaristaOrdered{
-		OrderID: uuid.New(),
-		//ItemLineID: uuid.UUID,
-	})
-	if err != nil {
-		g.logger.LogError(err)
-	}
-
-	err = ch.PublishWithContext(
-		ctx,
-		OrderTopic,
-		"log.INFO",
-		false,
-		false,
-		amqp.Publishing{
-			ContentType: "text/plain",
-			Type:        "barista.ordered",
-			Body:        eventBytes,
-		},
-	)
-
-	if err != nil {
-		g.logger.LogError(err)
-
-		return nil, err
-	}
-
-	// g.logger.Info("Sending message: %s -> %s", event, "orders_topic")
-
-	res := gen.PlaceOrderResponse{}
-
-	return &res, nil
-}
-
-func New(log *mylogger.Logger, cfg *config.Config) *App {
+	baristaHandler events.BaristaOrderUpdatedEventHandler,
+	kitchenHandler events.KitchenOrderUpdatedEventHandler,
+) *App {
 	return &App{
-		logger:  log,
-		cfg:     cfg,
-		network: "tcp",
-		address: "0.0.0.0:5002",
+		Cfg: cfg,
+
+		PG:        pg,
+		AMQPConn:  amqpConn,
+		Publisher: publisher,
+		Consumer:  consumer,
+
+		BaristaOrderPub: baristaOrderPub,
+		KitchenOrderPub: kitchenOrderPub,
+
+		ProductDomainSvc:  productDomainSvc,
+		UC:                uc,
+		CounterGRPCServer: counterGRPCServer,
+
+		baristaHandler: baristaHandler,
+		kitchenHandler: kitchenHandler,
 	}
 }
 
-func (a *App) Run(ctx context.Context) error {
-	a.logger.Info("Init %s %s\n", a.cfg.Name, a.cfg.Version)
+func (a *App) Worker(ctx context.Context, messages <-chan amqp.Delivery) {
+	for delivery := range messages {
+		slog.Info("processDeliveries", "delivery_tag", delivery.DeliveryTag)
+		slog.Info("received", "delivery_type", delivery.Type)
 
-	// Repository
-	// ...
+		switch delivery.Type {
+		case "barista-order-updated":
+			var payload shared.BaristaOrderUpdated
 
-	// Use case
-	// ...
+			err := json.Unmarshal(delivery.Body, &payload)
+			if err != nil {
+				slog.Error("failed to Unmarshal message", err)
+			}
 
-	// RabbitMQ
-	conn, err := a.connectToRabbit()
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
+			err = a.baristaHandler.Handle(ctx, &payload)
 
-	// gRPC Server
-	l, err := net.Listen(a.network, a.address)
-	if err != nil {
-		return err
-	}
+			if err != nil {
+				if err = delivery.Reject(false); err != nil {
+					slog.Error("failed to delivery.Reject", err)
+				}
 
-	defer func() {
-		if err := l.Close(); err != nil {
-			a.logger.Error("Failed to close %s %s: %v", a.network, a.address, err)
+				slog.Error("failed to process delivery", err)
+			} else {
+				err = delivery.Ack(false)
+				if err != nil {
+					slog.Error("failed to acknowledge delivery", err)
+				}
+			}
+		case "kitchen-order-updated":
+			var payload shared.KitchenOrderUpdated
+
+			err := json.Unmarshal(delivery.Body, &payload)
+			if err != nil {
+				slog.Error("failed to Unmarshal message", err)
+			}
+
+			err = a.kitchenHandler.Handle(ctx, &payload)
+
+			if err != nil {
+				if err = delivery.Reject(false); err != nil {
+					slog.Error("failed to delivery.Reject", err)
+				}
+
+				slog.Error("failed to process delivery", err)
+			} else {
+				err = delivery.Ack(false)
+				if err != nil {
+					slog.Error("failed to acknowledge delivery", err)
+				}
+			}
+		default:
+			slog.Info("default")
 		}
-	}()
-
-	s := grpc.NewServer()
-	gen.RegisterCounterServiceServer(s, &CounterServiceServerImpl{logger: a.logger, rabbitConn: conn})
-
-	go func() {
-		defer s.GracefulStop()
-		<-ctx.Done()
-	}()
-
-	a.logger.Info("Start server at " + a.address + " ...")
-
-	return s.Serve(l)
-}
-
-func (a *App) connectToRabbit() (*amqp.Connection, error) {
-	var (
-		rabbitConn  *amqp.Connection
-		counts      int64
-		rabbitMqURL = a.cfg.RabbitMQ.URL
-	)
-
-	for {
-		connection, err := amqp.Dial(rabbitMqURL)
-		if err != nil {
-			a.logger.Error("RabbitMq at %s not ready...\n", rabbitMqURL)
-			counts++
-		} else {
-			rabbitConn = connection
-
-			break
-		}
-
-		if counts > RetryTimes {
-			a.logger.LogError(err)
-
-			return nil, ErrCannotConnectRabbitMQ
-		}
-
-		a.logger.Info("Backing off for 2 seconds...")
-		time.Sleep(BackOffSeconds * time.Second)
-
-		continue
 	}
 
-	a.logger.Info("Connected to RabbitMQ!")
-
-	return rabbitConn, nil
+	slog.Info("Deliveries channel closed")
 }
